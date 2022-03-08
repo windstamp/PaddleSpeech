@@ -21,6 +21,9 @@ from typing import Union
 
 import six
 
+import os
+import paddle.fluid.profiler as pd_profiler
+
 from paddlespeech.t2s.training.extension import Extension
 from paddlespeech.t2s.training.extension import PRIORITY_READER
 from paddlespeech.t2s.training.reporter import scope
@@ -138,40 +141,50 @@ class Trainer(object):
                 max_iteration = self.stop_trigger.limit
 
         try:
+            global_step = 0
             while not stop_trigger(self):
-                self.observation = {}
-                # set observation as the report target
-                # you can use report freely in Updater.update()
+                global_step = global_step + 1
 
-                # updating parameters and state
-                with scope(self.observation):
+                if global_step >= 5 and global_step < 10:
+                    output_file = os.getcwd() + '/' + 'npu_prof' + '/samples'
+                else:
+                    output_file = os.getcwd() + '/' + 'npu_prof' + '/ignore'
+                os.makedirs(output_file, exist_ok=True)
 
-                    update()
-                    if self.profiler_options:
-                        profiler.add_profiler_step(self.profiler_options)
-                    batch_read_time = self.updater.batch_read_time
-                    batch_time = self.updater.batch_time
-                    avg_batch_cost = batch_read_time + batch_time
-                    logger = self.updater.logger
-                    logger.removeHandler(self.updater.filehandler)
-                    msg = self.updater.msg
-                    msg = " iter: {}/{}, ".format(self.updater.state.iteration,
-                                                  max_iteration) + msg
-                    msg += ", avg_reader_cost: {:.5f} sec, ".format(
-                        batch_read_time
-                    ) + "avg_batch_cost: {:.5f} sec, ".format(avg_batch_cost)
-                    msg += "avg_samples: {}, ".format(
-                        self.updater.
-                        batch_size) + "avg_ips: {:.5f} sequences/sec".format(
-                            self.updater.batch_size / avg_batch_cost)
-                    logger.info(msg)
+                with pd_profiler.npu_profiler(output_file) as npu_prof:
+                    self.observation = {}
+                    # set observation as the report target
+                    # you can use report freely in Updater.update()
 
-                    # execute extension when necessary
-                    for name, entry in extensions:
-                        if entry.trigger(self):
-                            entry.extension(self)
+                    # updating parameters and state
+                    with scope(self.observation):
 
-                # print("###", self.observation)
+                        update()
+                        if self.profiler_options:
+                            profiler.add_profiler_step(self.profiler_options)
+                        batch_read_time = self.updater.batch_read_time
+                        batch_time = self.updater.batch_time
+                        avg_batch_cost = batch_read_time + batch_time
+                        logger = self.updater.logger
+                        logger.removeHandler(self.updater.filehandler)
+                        msg = self.updater.msg
+                        msg = " iter: {}/{}, ".format(self.updater.state.iteration,
+                                                    max_iteration) + msg
+                        msg += ", avg_reader_cost: {:.5f} sec, ".format(
+                            batch_read_time
+                        ) + "avg_batch_cost: {:.5f} sec, ".format(avg_batch_cost)
+                        msg += "avg_samples: {}, ".format(
+                            self.updater.
+                            batch_size) + "avg_ips: {:.5f} sequences/sec".format(
+                                self.updater.batch_size / avg_batch_cost)
+                        logger.info(msg)
+
+                        # execute extension when necessary
+                        for name, entry in extensions:
+                            if entry.trigger(self):
+                                entry.extension(self)
+
+                    # print("###", self.observation)
         except Exception as e:
             f = sys.stderr
             f.write(f"Exception in main training loop: {e}\n")
